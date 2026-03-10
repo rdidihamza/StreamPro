@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, X, Send, Bot, User, AlertCircle } from 'lucide-react';
+import { MessageCircle, X, Send, Bot, User } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Message = {
@@ -12,217 +12,233 @@ type Message = {
   time: string;
 };
 
-// ─── Quick-question chips ─────────────────────────────────────────────────────
-//  Shown as one-tap shortcuts below the message list.
-const QUICK_QUESTIONS = [
-  'What are your IPTV prices?',
-  'How many channels do you offer?',
-  'Do you have sports channels?',
-  'What devices are supported?',
-  'How fast is activation?',
+// ─── Quick chips + predefined answers ────────────────────────────────────────
+// Clicking a chip fires handleQuickQuestion() — no API call, instant reply.
+const CHIPS: { label: string; answer: string }[] = [
+  {
+    label:  'Prices?',
+    answer: '💰 Our plans start from just $9.99/month!\n\n• Basic — $9.99/mo (1 device, HD)\n• Premium — $14.99/mo (3 devices, 4K) ⭐ Most Popular\n• Ultimate — $24.99/mo (5 devices, 4K/8K + reseller panel)\n\nAll plans include a 24h free trial and 7-day money-back guarantee. Click **Get IPTV Now** to subscribe instantly!',
+  },
+  {
+    label:  'Channels?',
+    answer: '📺 We offer 15,000+ live channels including movies, news, sports, kids, and international TV from every country — all in HD and 4K quality!',
+  },
+  {
+    label:  'Sports?',
+    answer: '⚽ You can watch all major sports live:\n\n• Football: Premier League, Champions League, La Liga, Serie A\n• Basketball: NBA, EuroLeague\n• American sports: NFL, MLB, NHL\n• Combat: UFC & Boxing\n• Motorsport: Formula 1, MotoGP\n• Tennis, Golf, Rugby and more — all in HD / 4K!',
+  },
+  {
+    label:  'Devices?',
+    answer: '📱 StreamPro works on all your devices:\n\n• Smart TV (Samsung, LG, Sony)\n• Android phones & tablets\n• iPhone & iPad\n• Amazon Firestick / Fire TV\n• MAG Box\n• Windows PC & Mac\n• Any device with M3U or Xtream Codes support\n\nOne subscription, unlimited screens!',
+  },
+  {
+    label:  'Free trial?',
+    answer: '🎉 Yes! We offer a 24-hour free trial on all plans. Click the **Get IPTV Now** button or reach us via the WhatsApp button for instant activation — no credit card required! 🚀',
+  },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function formatTime(): string {
+function now() {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-const INITIAL_MESSAGE: Message = {
+const WELCOME: Message = {
   id:   1,
   role: 'bot',
-  text: "Hi 👋 I'm StreamPro AI! Need help choosing the best IPTV plan or have questions about our service? I'm here to help!",
-  time: formatTime(),
+  text: "Hi 👋 I'm StreamPro AI! Ask me anything about our IPTV service — pricing, channels, devices and more.",
+  time: now(),
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function ChatBot() {
-  const [open,    setOpen]    = useState(false);
-  const [input,   setInput]   = useState('');
-  const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE]);
-  const [typing,  setTyping]  = useState(false);
-  const [unread,  setUnread]  = useState(1);
+  const [open,     setOpen]     = useState(false);
+  const [input,    setInput]    = useState('');
+  const [messages, setMessages] = useState<Message[]>([WELCOME]);
+  const [loading,  setLoading]  = useState(false);
+  const [unread,   setUnread]   = useState(1);
 
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const inputRef   = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef  = useRef<HTMLInputElement>(null);
 
-  // Scroll to latest message whenever messages change or chat opens
+  // Auto-scroll to latest message
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
+
+  // Clear unread + focus input when opened
   useEffect(() => {
     if (open) {
       setUnread(0);
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60);
+      setTimeout(() => inputRef.current?.focus(), 150);
     }
-  }, [open, messages]);
-
-  // Focus the input when the window opens
-  useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 200);
   }, [open]);
 
-  // ── Core send function ─────────────────────────────────────────────────────
-  //
-  //  1. Optimistically add the user bubble to the UI.
-  //  2. Snapshot the current message list BEFORE the state update (React's
-  //     setState is async, so `messages` at this point still lacks the new msg).
-  //  3. POST { message, history } to /api/chat.
-  //  4. Append the AI reply — or a friendly error bubble if the call fails.
-  //
-  const sendMessage = async (text: string) => {
+  // ── Quick question — predefined answer, no API call ───────────────────────
+  const handleQuickQuestion = (chip: typeof CHIPS[number]) => {
+    if (loading) return;
+
+    const userMsg:  Message = { id: Date.now(),     role: 'user', text: chip.label,  time: now() };
+    const botMsg:   Message = { id: Date.now() + 1, role: 'bot',  text: chip.answer, time: now() };
+
+    setMessages((prev) => [...prev, userMsg, botMsg]);
+    if (!open) setUnread((n) => n + 1);
+  };
+
+  // ── Send (typed messages → API) ────────────────────────────────────────────
+  const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || typing) return;
+    if (!trimmed || loading) return;
 
-    // Capture history BEFORE we add the current user message to state.
-    // The API needs previous turns as context — not the turn being sent.
-    const historySnapshot: { role: 'user' | 'bot'; text: string }[] =
-      messages.map(({ role, text }) => ({ role, text }));
+    const historySnap = messages.map(({ role, text }) => ({ role, text }));
 
-    const userMsg: Message = {
-      id:   Date.now(),
-      role: 'user',
-      text: trimmed,
-      time: formatTime(),
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [
+      ...prev,
+      { id: Date.now(), role: 'user', text: trimmed, time: now() },
+    ]);
     setInput('');
-    setTyping(true);
+    setLoading(true);
+
+    let reply = 'AI is temporarily unavailable. Please contact us via WhatsApp. 😕';
 
     try {
       const res = await fetch('/api/chat', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ message: trimmed, history: historySnapshot }),
+        body:    JSON.stringify({ message: trimmed, history: historySnap }),
       });
 
-      if (!res.ok) {
-        // Surface the API-level error message if present
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error ?? `HTTP ${res.status}`);
+      let json: Record<string, string> = {};
+      try { json = await res.json(); } catch { /* ignore parse errors */ }
+
+      if (res.ok && json.reply) {
+        reply = json.reply;
+      } else {
+        reply = json.reply ?? json.error ?? `Something went wrong (${res.status}). Please try again.`;
+        console.warn('[ChatBot]', res.status, reply);
       }
-
-      const { reply } = (await res.json()) as { reply: string };
-
-      const botMsg: Message = {
-        id:   Date.now() + 1,
-        role: 'bot',
-        text: reply,
-        time: formatTime(),
-      };
-
-      setMessages((prev) => [...prev, botMsg]);
-      if (!open) setUnread((n) => n + 1);
-
     } catch (err) {
-      console.error('[ChatBot] API error:', err);
-
-      const errMsg: Message = {
-        id:   Date.now() + 1,
-        role: 'bot',
-        text: "Sorry, I'm having trouble connecting right now 😕 Please try the WhatsApp button on the left for instant support!",
-        time: formatTime(),
-      };
-
-      setMessages((prev) => [...prev, errMsg]);
-    } finally {
-      setTyping(false);
+      console.error('[ChatBot] network error:', err);
     }
+
+    setMessages((prev) => [
+      ...prev,
+      { id: Date.now() + 1, role: 'bot', text: reply, time: now() },
+    ]);
+    setLoading(false);
+    if (!open) setUnread((n) => n + 1);
   };
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
-      {/* ── Chat window ────────────────────────────────────────────────────── */}
+      {/* ── Chat window ───────────────────────────────────────────────────── */}
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.85, y: 20 }}
-            animate={{ opacity: 1, scale: 1,    y: 0  }}
-            exit={{    opacity: 0, scale: 0.85, y: 20  }}
-            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed bottom-24 right-4 sm:right-6 z-50 w-[340px] sm:w-[380px] max-h-[600px] flex flex-col rounded-3xl glass-dark border border-purple-500/30 shadow-glow-purple overflow-hidden"
+            key="chat-window"
+            initial={{ opacity: 0, y: 16, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0,  scale: 1    }}
+            exit={{    opacity: 0, y: 16, scale: 0.95 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="fixed bottom-[84px] right-5 z-50 flex flex-col rounded-2xl overflow-hidden shadow-2xl"
+            style={{
+              width:           340,
+              height:          420,
+              background:      '#0f0c29',
+              border:          '1px solid rgba(139,92,246,0.35)',
+              boxShadow:       '0 8px 40px rgba(124,58,237,0.35)',
+            }}
           >
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-purple-700/80 to-cyan-700/80 border-b border-white/10 flex-shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center shadow-glow-purple">
-                  <Bot className="w-5 h-5 text-white" />
+            {/* ── Header ──────────────────────────────────────────────────── */}
+            <div
+              className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+              style={{ background: 'linear-gradient(135deg,#7c3aed,#0891b2)' }}
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
+                  <Bot className="w-4 h-4 text-white" />
                 </div>
                 <div>
-                  <p className="font-bold text-sm text-white">StreamPro AI</p>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                    <span className="text-xs text-green-300">
-                      {typing ? 'Thinking…' : 'Online • powered by Gemini'}
+                  <p className="text-sm font-bold text-white leading-none">StreamPro AI</p>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse" />
+                    <span className="text-[10px] text-white/70">
+                      {loading ? 'Typing…' : 'Online • Gemini AI'}
                     </span>
                   </div>
                 </div>
               </div>
               <button
                 onClick={() => setOpen(false)}
-                className="w-8 h-8 rounded-xl glass border border-white/10 flex items-center justify-center text-gray-300 hover:text-white hover:border-white/30 transition-all"
+                className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80 hover:text-white transition-all"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            {/* Message list */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[300px] max-h-[380px]">
+            {/* ── Messages ────────────────────────────────────────────────── */}
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3"
+              style={{ background: '#0f0c29' }}>
+
               {messages.map((msg) => (
                 <motion.div
                   key={msg.id}
-                  initial={{ opacity: 0, y: 10 }}
+                  initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25 }}
+                  transition={{ duration: 0.2 }}
                   className={`flex items-end gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  {/* Bot avatar */}
                   {msg.role === 'bot' && (
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center flex-shrink-0">
-                      <Bot className="w-3.5 h-3.5 text-white" />
+                    <div className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center"
+                      style={{ background: 'linear-gradient(135deg,#7c3aed,#0891b2)' }}>
+                      <Bot className="w-3 h-3 text-white" />
                     </div>
                   )}
 
-                  <div className={`max-w-[80%] flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                    <div
-                      className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                        msg.role === 'user'
-                          ? 'bg-gradient-to-br from-purple-600 to-cyan-600 text-white rounded-br-sm'
-                          : 'glass border border-white/10 text-gray-200 rounded-bl-sm'
-                      }`}
-                    >
+                  <div className={`max-w-[78%] flex flex-col gap-0.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                    <div className={`px-3 py-2 rounded-xl text-xs leading-relaxed whitespace-pre-wrap ${
+                      msg.role === 'user'
+                        ? 'text-white rounded-br-sm'
+                        : 'text-gray-200 rounded-bl-sm border border-white/8'
+                    }`}
+                    style={msg.role === 'user'
+                      ? { background: 'linear-gradient(135deg,#7c3aed,#0891b2)' }
+                      : { background: '#1a1040' }
+                    }>
                       {msg.text}
                     </div>
-                    <span className="text-[10px] text-gray-600 px-1">{msg.time}</span>
+                    <span className="text-[9px] text-gray-600 px-0.5">{msg.time}</span>
                   </div>
 
-                  {/* User avatar */}
                   {msg.role === 'user' && (
-                    <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center flex-shrink-0">
-                      <User className="w-3.5 h-3.5 text-gray-300" />
+                    <div className="w-6 h-6 rounded-full bg-gray-700 flex-shrink-0 flex items-center justify-center">
+                      <User className="w-3 h-3 text-gray-400" />
                     </div>
                   )}
                 </motion.div>
               ))}
 
-              {/* Typing / thinking indicator */}
+              {/* Typing dots */}
               <AnimatePresence>
-                {typing && (
+                {loading && (
                   <motion.div
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
+                    exit={{ opacity: 0 }}
                     className="flex items-end gap-2"
                   >
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center flex-shrink-0">
-                      <Bot className="w-3.5 h-3.5 text-white" />
+                    <div className="w-6 h-6 rounded-full flex-shrink-0 flex items-center justify-center"
+                      style={{ background: 'linear-gradient(135deg,#7c3aed,#0891b2)' }}>
+                      <Bot className="w-3 h-3 text-white" />
                     </div>
-                    <div className="glass border border-white/10 px-4 py-3 rounded-2xl rounded-bl-sm">
+                    <div className="px-3 py-2.5 rounded-xl rounded-bl-sm border border-white/8"
+                      style={{ background: '#1a1040' }}>
                       <div className="flex gap-1">
                         {[0, 1, 2].map((i) => (
                           <motion.span
                             key={i}
-                            className="w-1.5 h-1.5 rounded-full bg-purple-400"
-                            animate={{ y: [0, -4, 0] }}
-                            transition={{ duration: 0.6, delay: i * 0.15, repeat: Infinity }}
+                            className="w-1.5 h-1.5 rounded-full bg-purple-400 block"
+                            animate={{ y: [0, -3, 0] }}
+                            transition={{ duration: 0.5, delay: i * 0.12, repeat: Infinity }}
                           />
                         ))}
                       </div>
@@ -231,88 +247,92 @@ export default function ChatBot() {
                 )}
               </AnimatePresence>
 
-              {/* Invisible anchor — always scrolled into view */}
               <div ref={bottomRef} />
             </div>
 
-            {/* Quick-question chips */}
-            <div className="px-4 py-2 flex gap-2 overflow-x-auto border-t border-white/5 flex-shrink-0 scrollbar-hide">
-              {QUICK_QUESTIONS.map((q) => (
+            {/* ── Quick chips ──────────────────────────────────────────────── */}
+            <div className="flex gap-1.5 px-3 py-2 overflow-x-auto flex-shrink-0 scrollbar-hide"
+              style={{ background: '#130f35', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+              {CHIPS.map((chip) => (
                 <button
-                  key={q}
-                  onClick={() => sendMessage(q)}
-                  disabled={typing}
-                  className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs glass border border-purple-500/30 text-purple-300 hover:border-purple-400 hover:text-white transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                  key={chip.label}
+                  onClick={() => handleQuickQuestion(chip)}
+                  disabled={loading}
+                  className="flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-medium text-purple-300 border border-purple-500/30 hover:border-purple-400 hover:text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'rgba(124,58,237,0.08)' }}
                 >
-                  {q}
+                  {chip.label}
                 </button>
               ))}
             </div>
 
-            {/* Text input + send button */}
-            <div className="p-4 border-t border-white/5 flex-shrink-0">
+            {/* ── Input bar ────────────────────────────────────────────────── */}
+            <div className="px-3 py-2.5 flex-shrink-0"
+              style={{ background: '#130f35', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
               <form
-                onSubmit={(e) => { e.preventDefault(); sendMessage(input); }}
+                onSubmit={(e) => { e.preventDefault(); send(input); }}
                 className="flex items-center gap-2"
               >
                 <input
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask me anything about IPTV…"
-                  disabled={typing}
-                  className="flex-1 px-4 py-2.5 rounded-xl glass border border-white/10 bg-transparent text-sm text-white placeholder-gray-500 outline-none focus:border-purple-500/50 transition-all disabled:opacity-60"
+                  placeholder="Ask about IPTV…"
+                  disabled={loading}
+                  className="flex-1 px-3 py-2 rounded-lg text-xs text-white placeholder-gray-500 outline-none transition-all disabled:opacity-50"
+                  style={{
+                    background: '#0f0c29',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(139,92,246,0.5)')}
+                  onBlur={(e)  => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}
                 />
                 <button
                   type="submit"
-                  disabled={!input.trim() || typing}
-                  className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center text-white hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-glow-purple"
+                  disabled={!input.trim() || loading}
+                  className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'linear-gradient(135deg,#7c3aed,#0891b2)' }}
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-3.5 h-3.5" />
                 </button>
               </form>
-
-              {/* Gemini attribution */}
-              <p className="text-center text-[10px] text-gray-700 mt-2 flex items-center justify-center gap-1">
-                <AlertCircle className="w-2.5 h-2.5" />
-                AI responses may vary. Contact support for guaranteed help.
+              <p className="text-center text-[9px] text-gray-700 mt-1.5">
+                Powered by Gemini AI · Responses may vary
               </p>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── Floating toggle button ─────────────────────────────────────────── */}
+      {/* ── Toggle button ─────────────────────────────────────────────────── */}
       <motion.button
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen((v) => !v)}
         initial={{ scale: 0 }}
         animate={{ scale: 1 }}
-        transition={{ delay: 1.5, type: 'spring', bounce: 0.5 }}
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.9 }}
-        className="fixed bottom-6 right-4 sm:right-6 z-50 w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-600 to-cyan-500 flex items-center justify-center shadow-glow-purple hover:shadow-glow-cyan transition-all duration-300"
+        transition={{ delay: 1.2, type: 'spring', stiffness: 260, damping: 20 }}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.92 }}
+        className="fixed bottom-5 right-5 z-50 w-13 h-13 rounded-2xl flex items-center justify-center text-white shadow-lg"
+        style={{
+          width:      52,
+          height:     52,
+          background: 'linear-gradient(135deg,#7c3aed,#0891b2)',
+          boxShadow:  '0 4px 24px rgba(124,58,237,0.5)',
+        }}
         aria-label="Open AI chat"
       >
         <AnimatePresence mode="wait">
           {open ? (
-            <motion.div
-              key="x"
-              initial={{ rotate: -90, opacity: 0 }}
-              animate={{ rotate:   0, opacity: 1 }}
-              exit={{    rotate:  90, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <X className="w-6 h-6 text-white" />
+            <motion.div key="x"
+              initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }}
+              exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}>
+              <X className="w-5 h-5" />
             </motion.div>
           ) : (
-            <motion.div
-              key="chat"
-              initial={{ rotate:  90, opacity: 0 }}
-              animate={{ rotate:   0, opacity: 1 }}
-              exit={{    rotate: -90, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <MessageCircle className="w-6 h-6 text-white" />
+            <motion.div key="msg"
+              initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }}
+              exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}>
+              <MessageCircle className="w-5 h-5" />
             </motion.div>
           )}
         </AnimatePresence>
@@ -320,9 +340,8 @@ export default function ChatBot() {
         {/* Unread badge */}
         {unread > 0 && !open && (
           <motion.span
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center"
+            initial={{ scale: 0 }} animate={{ scale: 1 }}
+            className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center"
           >
             {unread}
           </motion.span>

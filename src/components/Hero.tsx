@@ -1,12 +1,19 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Play, ChevronDown } from 'lucide-react';
 import Image from 'next/image';
 
-const HERO_IMAGE =
-  'https://images.unsplash.com/photo-1574375927938-d5a98e8ffe85?w=1920&q=80';
+// ─── Banner images (served from /public/banners/) ─────────────────────────────
+const BANNERS = [
+  { src: '/banners/Films-banner.png', alt: 'Movies & Series streaming' },
+  { src: '/banners/Foot-banner.png',  alt: 'Live football & sports'    },
+];
 
+const SLIDE_DURATION = 5000; // ms each banner is shown
+
+// ─── Animation variants ───────────────────────────────────────────────────────
 const fadeUp = {
   hidden:  { opacity: 0, y: 40 },
   visible: (i: number) => ({
@@ -16,6 +23,13 @@ const fadeUp = {
   }),
 };
 
+const bannerVariants = {
+  enter: { opacity: 0, scale: 1.06 },
+  show:  { opacity: 1, scale: 1,    transition: { duration: 1.2, ease: 'easeOut' } },
+  exit:  { opacity: 0, scale: 1.02, transition: { duration: 1.0, ease: 'easeIn'  } },
+};
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
 const statItems = [
   { value: '15,000+', label: 'Live Channels'   },
   { value: '60,000+', label: 'Movies & Series' },
@@ -24,49 +38,60 @@ const statItems = [
 ];
 
 export default function Hero() {
+  const [current, setCurrent] = useState(0);
+
+  // Auto-advance banner every SLIDE_DURATION ms
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrent((prev) => (prev + 1) % BANNERS.length);
+    }, SLIDE_DURATION);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
 
-      {/* ── Layer 0: Background image ─────────────────────────────────
-          Sits at the very bottom of the stacking context.
-          brightness(0.3) keeps the image visible but dark enough.      */}
-      <div className="absolute inset-0">
-        <Image
-          src={HERO_IMAGE}
-          alt="Streaming background"
-          fill
-          priority
-          className="object-cover object-center scale-105"
-          style={{ filter: 'brightness(0.30) saturate(1.3)' }}
-        />
-      </div>
+      {/* ── Layer 0: Animated banner images ─────────────────────────────────
+          AnimatePresence keeps the exiting image mounted until its fade-out
+          is complete, producing a smooth crossfade between slides.          */}
+      <AnimatePresence initial={false}>
+        <motion.div
+          key={current}
+          variants={bannerVariants}
+          initial="enter"
+          animate="show"
+          exit="exit"
+          className="absolute inset-0"
+        >
+          <Image
+            src={BANNERS[current].src}
+            alt={BANNERS[current].alt}
+            fill
+            priority={current === 0}
+            className="object-cover object-center"
+            style={{ filter: 'brightness(0.32) saturate(1.25)' }}
+          />
+        </motion.div>
+      </AnimatePresence>
 
-      {/* ── Layer 1: Solid dark scrim ─────────────────────────────────
-          bg-black/60 ensures text is always readable regardless of the
-          underlying image. Comes AFTER the image in DOM → renders on top
-          without needing a custom z-index class.                        */}
-      <div className="absolute inset-0 bg-black/60" />
+      {/* ── Layer 1: Dark scrim ──────────────────────────────────────────── */}
+      <div className="absolute inset-0 bg-black/55" />
 
-      {/* ── Layer 2: Gradient overlays (cinematic toning) ────────────
-          These sit above the scrim to add colour depth.               */}
+      {/* ── Layer 2: Gradient overlays ───────────────────────────────────── */}
       <div className="absolute inset-0 bg-gradient-to-b from-[#0f0c29]/70 via-transparent to-[#0f0c29]" />
       <div className="absolute inset-0 bg-gradient-to-r from-purple-900/25 via-transparent to-cyan-900/25" />
 
-      {/* ── Layer 3: Glowing orbs ─────────────────────────────────────
-          pointer-events-none so they never block clicks.              */}
+      {/* ── Layer 3: Glowing orbs ────────────────────────────────────────── */}
       <div className="orb w-[600px] h-[600px] bg-purple-600 top-[-100px] left-[-200px] pointer-events-none" />
       <div className="orb w-[500px] h-[500px] bg-cyan-500 bottom-[-100px] right-[-150px] pointer-events-none" />
       <div className="orb w-[300px] h-[300px] bg-pink-600 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none" style={{ opacity: 0.08 }} />
 
-      {/* ── Layer 4: Hero content (z-10 guarantees it's above all layers) */}
+      {/* ── Layer 4: Hero content ────────────────────────────────────────── */}
       <div className="relative z-10 w-full max-w-5xl mx-auto px-4 sm:px-6 text-center pt-24 pb-16">
 
         {/* Live badge */}
         <motion.div
-          custom={0}
-          variants={fadeUp}
-          initial="hidden"
-          animate="visible"
+          custom={0} variants={fadeUp} initial="hidden" animate="visible"
           className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass border border-purple-500/40 text-sm font-medium text-purple-300 mb-6"
         >
           <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
@@ -75,10 +100,7 @@ export default function Hero() {
 
         {/* Main heading */}
         <motion.h1
-          custom={1}
-          variants={fadeUp}
-          initial="hidden"
-          animate="visible"
+          custom={1} variants={fadeUp} initial="hidden" animate="visible"
           className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black leading-[1.05] tracking-tight mb-6 drop-shadow-2xl"
         >
           Unlimited
@@ -88,10 +110,7 @@ export default function Hero() {
 
         {/* Sub-heading */}
         <motion.p
-          custom={2}
-          variants={fadeUp}
-          initial="hidden"
-          animate="visible"
+          custom={2} variants={fadeUp} initial="hidden" animate="visible"
           className="text-lg sm:text-xl md:text-2xl text-gray-200 max-w-3xl mx-auto mb-10 leading-relaxed drop-shadow-lg"
         >
           Watch{' '}
@@ -102,10 +121,7 @@ export default function Hero() {
 
         {/* CTA buttons */}
         <motion.div
-          custom={3}
-          variants={fadeUp}
-          initial="hidden"
-          animate="visible"
+          custom={3} variants={fadeUp} initial="hidden" animate="visible"
           className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16"
         >
           <a
@@ -125,10 +141,7 @@ export default function Hero() {
 
         {/* Stats grid */}
         <motion.div
-          custom={4}
-          variants={fadeUp}
-          initial="hidden"
-          animate="visible"
+          custom={4} variants={fadeUp} initial="hidden" animate="visible"
           className="grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-3xl mx-auto"
         >
           {statItems.map((s) => (
@@ -143,7 +156,28 @@ export default function Hero() {
         </motion.div>
       </div>
 
-      {/* ── Scroll indicator ─────────────────────────────────────────── */}
+      {/* ── Slide indicator dots ─────────────────────────────────────────── */}
+      <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-10 flex gap-2">
+        {BANNERS.map((_, i) => (
+          <button
+            key={i}
+            onClick={() => setCurrent(i)}
+            aria-label={`Go to slide ${i + 1}`}
+            className="transition-all duration-300"
+          >
+            <motion.div
+              animate={{
+                width:   i === current ? 24 : 8,
+                opacity: i === current ? 1  : 0.4,
+              }}
+              transition={{ duration: 0.3 }}
+              className="h-2 rounded-full bg-white"
+            />
+          </button>
+        ))}
+      </div>
+
+      {/* ── Scroll indicator ─────────────────────────────────────────────── */}
       <motion.a
         href="#features"
         initial={{ opacity: 0 }}

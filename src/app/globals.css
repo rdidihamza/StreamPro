@@ -125,6 +125,43 @@ body {
   pointer-events: none;
 }
 
+/* ── Top progress bar ──────────────────────────────────────────────────── */
+.progress-bar-track {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 9998;
+  overflow: hidden;
+  background: transparent;
+}
+
+.progress-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    #7C3AED 20%,
+    #A855F7 40%,
+    #06B6D4 60%,
+    #EC4899 80%,
+    transparent 100%
+  );
+  border-radius: 0 2px 2px 0;
+  animation: progress-sweep 2s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes progress-sweep {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(260%); }
+}
+
 /* ── Logo scroller (right → left, kept for reference) ─────────────────── */
 .logo-track {
   animation: logo-scroll 40s linear infinite;
@@ -142,22 +179,27 @@ body {
   );
 }
 
-/* ── Logo ticker (left → right marquee) ────────────────────────────────── */
+/* ── Logo ticker (right → left marquee) ─────────────────────────────────── */
 
 /*
-  How the seamless loop works
-  ───────────────────────────
-  The track holds 2 identical copies of every logo side-by-side.
-  Total track width = 2W  (W = one full copy of all logos).
+  Seamless right → left loop
+  ──────────────────────────
+  Track holds 2 identical copies:  [ copy-1 | copy-2 ]  (total = 2W)
 
-  Animation:  translateX(-50%)  →  translateX(0%)
-    • -50% of the track's own width  = -W  (shift left by one full copy)
-    • Going from -W back to 0 makes the logos slide RIGHT (left → right).
-    • At 0% we see copy-1 ; at -50% we see copy-2 — they're identical,
-      so the loop is perfectly seamless with no visible jump.
+  Keyframe  0%  → translateX(0%)      visible: copy-1 (left half of track)
+  Keyframe 100% → translateX(-50%)    visible: copy-2 (right half, identical)
+
+  Moving from 0 → -W shifts every logo to the LEFT.
+  Logos exit on the left edge; copy-2 enters from the right seamlessly
+  because it is visually identical to copy-1 — no jump, no flash.
 */
+@keyframes marquee-rtl {
+  0%   { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
 .ticker-track {
-  animation: marquee 30s linear infinite;
+  animation: marquee-rtl 30s linear infinite;
   will-change: transform;
 }
 
